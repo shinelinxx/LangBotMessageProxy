@@ -74,7 +74,7 @@ class LangBotMessageProxy(BasePlugin):
         user_id, group_id, message, _ = self.message_queue.popleft()
         
         try:
-            # 发送到元宝
+            # 发送到第三者
             await self.host.send_active_message(
                 adapter=self.host.get_platform_adapters()[0],
                 target_type="person",
