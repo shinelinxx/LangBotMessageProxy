@@ -1,3 +1,3 @@
-YUANBAO_ID: "wxid_wi_1d142z0zdj03" # yuanbao
-ACTIVE_WINDOW: 5  # 元宝回复消息后，你可以独享5s的消息窗口
-TOTAL_TIMEOUT: 20 # 元宝20s没给你回消息，你就会被踢出等待队列
+OTHER_ID: xxxxxx # 自己去日志捞
+ACTIVE_WINDOW: 3  # 活跃窗口秒数
+TOTAL_TIMEOUT: 20 # 总超时秒数

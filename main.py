@@ -9,12 +9,12 @@ import xml.etree.ElementTree as ET
 import yaml, os
 from typing import List, Optional, Type
 @register(
-    name="LangBotYbProxyPlugin",
-    description="Langbot元宝传话筒",
-    version="0.2",
-    author="shinelin"
+    name="LangBotMessageProxy",
+    description="Langbot消息传话筒",
+    version="0.3",
+    author="shinelinxx"
 )
-class LangBotYbProxyPlugin(BasePlugin):
+class LangBotMessageProxy(BasePlugin):
     
     def __init__(self, host: APIHost):
         super().__init__(host)
@@ -22,15 +22,15 @@ class LangBotYbProxyPlugin(BasePlugin):
         self.processing = {}  # user_id: (group_id, first_reply_time, last_reply_time)
         self.lock = asyncio.Lock()
         self.config = self._load_config()
-        # 元宝接收的消息类型
-        self._yuanbao_process_type = [
+        # 第三者接收的消息类型
+        self._other_accept_msg_type = [
             platform_message.WeChatForwardLink,
             platform_message.WeChatAppMsg,
             platform_message.WeChatForwardImage,
             platform_message.WeChatForwardFile,
         ]
-        # 元宝回复的消息类型
-        self._yuanbao_reply_type = [
+        # 第三者回复的保留的消息类型
+        self._other_reply_msg_type = [
             platform_message.WeChatForwardLink,
             platform_message.Plain,
         ]
@@ -78,7 +78,7 @@ class LangBotYbProxyPlugin(BasePlugin):
             await self.host.send_active_message(
                 adapter=self.host.get_platform_adapters()[0],
                 target_type="person",
-                target_id=self.config["YUANBAO_ID"],
+                target_id=self.config["OTHER_ID"],
                 message=message  # 修正参数名,文档不对。
             )
             self.ap.logger.info(f"已提交处理 [用户:{user_id}]")
@@ -111,8 +111,8 @@ class LangBotYbProxyPlugin(BasePlugin):
                 message_list.append(component)
         return platform_message.MessageChain(message_list)
 
-    async def _handle_yuanbao_reply(self, ctx: EventContext):
-        """处理元宝回复"""
+    async def _handle_other_reply(self, ctx: EventContext):
+        """处理第三者回复"""
         try:
             current_user = next(iter(self.processing.keys()), None)
             if not current_user:
@@ -133,7 +133,7 @@ class LangBotYbProxyPlugin(BasePlugin):
                 adapter=self.host.get_platform_adapters()[0],
                 target_type="group" if group_id else "person",
                 target_id=group_id or current_user,
-                message= self._process_msg_filter(reply, self._yuanbao_reply_type)
+                message= self._process_msg_filter(reply, self._other_reply_msg_type)
             )
             self.ap.logger.info(f"成功投递回复 [用户:{current_user}]")
 
@@ -157,21 +157,21 @@ async def handle_group_message(self, ctx: EventContext):
             if ctx.event.launcher_id == ctx.event.sender_id \
                 else ctx.event.launcher_id
         
-        # 非元宝消息处理
-        if ctx.event.sender_id != self.config["YUANBAO_ID"]:
+        # 机器人接收的消息处理
+        if ctx.event.sender_id != self.config["OTHER_ID"]:
             # 提取消息
-            send_to_yuanbao_message = self._process_msg_filter(
+            send_to_other_message = self._process_msg_filter(
                 ctx.event.query.message_chain,
-                self._yuanbao_process_type
+                self._other_accept_msg_type
             )
             
             # 仅当包含目标类型时处理
-            if len(send_to_yuanbao_message) > 0:
+            if len(send_to_other_message) > 0:
                 async with self.lock:
                     self.message_queue.append((
                         ctx.event.sender_id,
                         group_id,
-                        send_to_yuanbao_message,
+                        send_to_other_message,
                         datetime.now()
                     ))
                     self.ap.logger.info(f"接收群消息 [队列:{len(self.message_queue)}]")
@@ -183,23 +183,23 @@ async def handle_group_message(self, ctx: EventContext):
 async def handle_private_message(self, ctx: EventContext):
     """统一消息入口"""
     try:
-        if ctx.event.sender_id == self.config["YUANBAO_ID"]:
-            return await self._handle_yuanbao_reply(ctx)
+        if ctx.event.sender_id == self.config["OTHER_ID"]:
+            return await self._handle_other_reply(ctx)
         
-        # 非元宝消息处理
-        if ctx.event.sender_id != self.config["YUANBAO_ID"]:
+        # 机器人接收的消息处理
+        if ctx.event.sender_id != self.config["OTHER_ID"]:
             # 提取消息
-            send_to_yuanbao_message = self._process_msg_filter(
+            send_to_other_message = self._process_msg_filter(
                 ctx.event.query.message_chain,
-                self._yuanbao_process_type
+                self._other_accept_msg_type
             )
             # 仅当包含目标类型时处理
-            if len(send_to_yuanbao_message) > 0:
+            if len(send_to_other_message) > 0:
                 async with self.lock:
                     self.message_queue.append((
                         ctx.event.sender_id,
                         None,
-                        send_to_yuanbao_message,
+                        send_to_other_message,
                         datetime.now()
                     ))
                     self.ap.logger.info(f"接收私聊消息 [用户:{ctx.event.sender_id}]")
