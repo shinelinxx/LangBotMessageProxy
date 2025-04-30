@@ -7,7 +7,8 @@ from pkg.plugin.events import GroupNormalMessageReceived, PersonNormalMessageRec
 from pkg.platform.types import message as platform_message
 import xml.etree.ElementTree as ET
 import yaml, os
-from typing import List, Optional, Type
+from typing import List, Optional, Type, Sequence
+import re
 @register(
     name="LangBotMessageProxy",
     description="Langbot消息传话筒",
@@ -28,11 +29,12 @@ class LangBotMessageProxy(BasePlugin):
             platform_message.WeChatAppMsg,
             platform_message.WeChatForwardImage,
             platform_message.WeChatForwardFile,
+            platform_message.WeChatForwardQuote
         ]
         # 第三者回复的保留的消息类型
         self._other_reply_msg_type = [
             platform_message.WeChatForwardLink,
-            platform_message.Plain,
+            #platform_message.Plain,
         ]
 
     def _load_config(self):
@@ -97,18 +99,27 @@ class LangBotMessageProxy(BasePlugin):
     def _process_msg_filter(
             self, 
             message_chain: Optional[platform_message.MessageChain],
-            filter: List[Type[platform_message.MessageComponent]],
+            filter: Sequence[Type[platform_message.MessageComponent]],
             )->platform_message.MessageChain:
         if message_chain is None:
             return platform_message.MessageChain()
         message_list = []
         for component in message_chain:
-            if isinstance(component, platform_message.Quote):
-                for item in component.origin:
-                    if type(item) in filter:
-                        message_list.append(item)
+            if isinstance(component, platform_message.WeChatForwardQuote):
+                appmsg_xml = ET.fromstring(component.app_msg)
+                user_data = appmsg_xml.findtext('.//title') or ""
+                quote_data = appmsg_xml.find('.//refermsg').findtext('.//content')
+                if quote_data and "<msg>" in quote_data:
+                    pattern = r'@(?!chatroom)\S+'
+                    regex = re.compile(pattern)
+                    if regex.fullmatch(user_data):
+                        modified_app_msg = re.sub(pattern, '你怎么看', component.app_msg)
+                    else:
+                        modified_app_msg = re.sub(pattern, '', component.app_msg)
+                    message_list.append(platform_message.WeChatForwardQuote(app_msg=modified_app_msg))
             elif type(component) in filter:
                 message_list.append(component)
+            
         return platform_message.MessageChain(message_list)
 
     async def _handle_other_reply(self, ctx: EventContext):
@@ -118,6 +129,14 @@ class LangBotMessageProxy(BasePlugin):
             if not current_user:
                 self.ap.logger.warning("收到游离回复")
                 return
+            
+            reply = ctx.event.query.message_chain.copy()
+            message= self._process_msg_filter(reply, self._other_reply_msg_type)
+
+            # 无效回复不占用窗口时长
+            if message is None or len(message) == 0:
+                ctx.prevent_default()
+                return
 
             # 更新最后回复时间
             group_id, first_time, _ = self.processing[current_user]
@@ -125,7 +144,6 @@ class LangBotMessageProxy(BasePlugin):
             self.ap.logger.debug(f"更新活跃时间 [用户:{current_user}]")            
 
             # 转发回复
-            reply = ctx.event.query.message_chain.copy()
             if group_id:
                 reply.insert(0, At(target=current_user))
             
@@ -133,7 +151,7 @@ class LangBotMessageProxy(BasePlugin):
                 adapter=self.host.get_platform_adapters()[0],
                 target_type="group" if group_id else "person",
                 target_id=group_id or current_user,
-                message= self._process_msg_filter(reply, self._other_reply_msg_type)
+                message= message
             )
             self.ap.logger.info(f"成功投递回复 [用户:{current_user}]")
 
@@ -175,9 +193,9 @@ async def handle_group_message(self, ctx: EventContext):
                         datetime.now()
                     ))
                     self.ap.logger.info(f"接收群消息 [队列:{len(self.message_queue)}]")
-                    ctx.prevent_default()  # 阻断默认行为
     except Exception as e:
         self.ap.logger.error(f"群消息接收异常: {str(e)}")
+    ctx.prevent_default()  # 阻断默认行为
 
 @handler(PersonNormalMessageReceived)
 async def handle_private_message(self, ctx: EventContext):
@@ -203,7 +221,6 @@ async def handle_private_message(self, ctx: EventContext):
                         datetime.now()
                     ))
                     self.ap.logger.info(f"接收私聊消息 [用户:{ctx.event.sender_id}]")
-                    ctx.prevent_default()  # 阻断默认行为
-
     except Exception as e:
         self.ap.logger.error(f"私聊处理异常: {str(e)}, line:{e.__traceback__.tb_lineno}")
+    ctx.prevent_default()  # 阻断默认行为
